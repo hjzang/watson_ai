@@ -1,0 +1,164 @@
+import os
+import sys
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List, Dict
+
+# --- 최신 Langchain Core Import 경로 사용 ---
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_community.vectorstores import Chroma
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough, RunnableLambda
+# ---
+
+# --- 설정 ---
+CHROMA_PERSIST_DIR = "chroma_db"       # 'embed_data.py'로 만든 DB 폴더
+EMBEDDING_MODEL = "text-embedding-3-small"
+LLM_MODEL = "gpt-4o-mini"              # 최신 AI 모델
+# ---
+
+# 1. .env 파일에서 OPENAI_API_KEY 불러오기
+if not load_dotenv():
+    print("오류: .env 파일을 찾을 수 없습니다.")
+    sys.exit(1)
+if not os.getenv("OPENAI_API_KEY"):
+    print("오류: OPENAI_API_KEY가 .env 파일에 없습니다.")
+    sys.exit(1)
+
+# 2. FastAPI 앱 생성
+# (uvicorn이 찾을 변수 이름이 'app'이어야 합니다)
+app = FastAPI()
+
+# 3. AI '왓슨'의 시스템 프롬프트 (일상 대화 허용 + 수사 복귀 규칙)
+system_prompt = """
+너는 임시정부 소속의 냉철한 수사 조수 AI '왓슨'이다.
+너의 주된 임무는 플레이어가 수집한 '단서(Context)'를 바탕으로 '황옥 경부 사건'을 분석하고 추리 방향을 제시하는 것이다.
+
+[규칙 1]
+플레이어가 수집한 '단서(Context)'에 기반해서만 대답해야 한다.
+Context의 '[내용]'은 사실로, '[AI 분석]'은 너의 전문적인 견해로 사용하라.
+
+[규칙 2 (수정됨)]
+만약 플레이어의 질문이 Context(단서)와 관련이 있다면, 규칙 1에 따라 답변하라.
+만약 Context가 비어있거나 질문이 단서와 전혀 관련이 없다면 (예: 날씨, 농담, 너 자신에 대한 질문), **아주 짧게 (1-2 문장)** 너의 '수사 조수' 캐릭터를 유지하며 일상적인 답변을 할 수 있다. 하지만 길게 대화하지 마라.
+
+[규칙 3 (수정됨)]
+절대 '밀정이다', '아니다'와 같은 직접적인 정답을 제시하지 마라.
+항상 '...라는 주장을 뒷받침합니다', '...라는 의혹이 있습니다'와 같이
+플레이어가 스스로 생각하도록 '방향성'만 제시하라.
+
+[규칙 4 (신규)]
+일상적인 대화를 한두 번 주고받은 후에는, 반드시 "이제 다시 수사로 돌아가죠.", "사건에 집중해야 합니다." 와 같이 자연스럽게 대화를 다시 사건 중심으로 되돌려야 한다. 너의 주된 임무는 수사를 돕는 것이다.
+"""
+
+# 4. RAG 체인 컴포넌트 준비 (앱 실행 시 한 번만 로드)
+try:
+    llm = ChatOpenAI(model=LLM_MODEL, temperature=0.2)
+    embeddings = OpenAIEmbeddings(model=EMBEDDING_MODEL)
+
+    # DB 폴더 존재 확인
+    if not os.path.exists(CHROMA_PERSIST_DIR):
+        print(f"오류: ChromaDB 폴더 '{CHROMA_PERSIST_DIR}'를 찾을 수 없습니다.")
+        print("'embed_data.py'를 먼저 성공적으로 실행해야 합니다.")
+        sys.exit(1)
+
+    vectorstore = Chroma(
+        persist_directory=CHROMA_PERSIST_DIR,
+        embedding_function=embeddings
+    )
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        MessagesPlaceholder(variable_name="chat_history"), # 대화 기록 공간
+        ("human", "현재까지 확보한 단서(Context)는 다음과 같습니다.\n---\n{context}\n---\n\n탐정(플레이어)의 질문: {question}")
+    ])
+    output_parser = StrOutputParser()
+
+except Exception as e:
+    print(f"오류: AI 컴포넌트 초기화 실패. API 키 또는 DB 폴더({CHROMA_PERSIST_DIR})를 확인하세요. ({e})")
+    sys.exit(1)
+
+# 5. 백엔드 요청 형식 정의
+class ChatRequest(BaseModel):
+    question: str
+    acquired_clue_list: List[str] = []
+    chat_history: List[str] = [] # 홀수번째는 AI, 짝수번째는 Human
+
+# 6. (헬퍼 함수) 검색된 단서(Docs) 포맷팅
+def format_docs(docs):
+    if not docs:
+        return "(현재 질문과 관련된 확보 단서 없음)"
+    return "\n\n".join(doc.page_content for doc in docs)
+
+# 7. (헬퍼 함수) 채팅 히스토리 포맷팅
+def format_chat_history(history_list: List[str]) -> List:
+    messages = []
+    for i, message in enumerate(history_list):
+        if i % 2 == 0: # 짝수 인덱스는 Human (플레이어)
+            messages.append(HumanMessage(content=message))
+        else: # 홀수 인덱스는 AI (왓슨)
+            messages.append(AIMessage(content=message))
+    return messages
+
+# 8. AI의 '입과 귀' (API 엔드포인트)
+@app.post("/api/ai/ask")
+def ask_watson(request: ChatRequest):
+    print(f"\n--- 새 요청 수신 ---")
+    print(f"질문: {request.question}")
+    print(f"인벤토리: {request.acquired_clue_list}")
+    print(f"대화기록: {len(request.chat_history)}개")
+
+    try:
+        # 9. 인벤토리 목록으로 DB '필터' 생성
+        if not request.acquired_clue_list:
+            metadata_filter = {"clue_id": "NONE"} # 빈 인벤토리는 검색 불가
+        else:
+            metadata_filter = {"clue_id": {"$in": request.acquired_clue_list}}
+        print(f"DB 검색 필터: {metadata_filter}")
+
+        # 10. 필터 적용된 '검색기(Retriever)' 생성
+        retriever = vectorstore.as_retriever(
+            search_kwargs={'filter': metadata_filter}
+        )
+
+        # 11. RAG 체인 구성 (LCEL)
+        rag_chain = (
+            {
+                "context": RunnableLambda(lambda x: x['question']) | retriever | format_docs, # 질문으로 검색 후 포맷팅
+                "question": RunnableLambda(lambda x: x['question']), # 질문 그대로 전달
+                "chat_history": RunnableLambda(lambda x: format_chat_history(x['chat_history'])) # 히스토리 포맷팅
+            }
+            | prompt
+            | llm
+            | output_parser
+        )
+
+        # 12. 체인 실행을 위한 입력 데이터 준비
+        chain_input = {
+            "question": request.question,
+            "chat_history": request.chat_history
+        }
+
+        # 13. 체인 실행 (RAG + LLM 호출)
+        print("AI 답변 생성 시작...")
+        answer = rag_chain.invoke(chain_input)
+        print(f"AI 답변 생성 완료: {answer}")
+
+        return {"answer": answer}
+
+    except Exception as e:
+        print(f"!!! 오류 발생: AI 답변 생성 중 문제 발생: {e}")
+        raise HTTPException(status_code=500, detail=f"AI 서버 내부 오류 발생")
+
+# 14. (테스트용) 루트 경로
+@app.get("/")
+def read_root():
+    return {"message": "AI 조수 '왓슨' (FastAPI) 서버가 작동 중입니다. API 문서는 /docs 에서 확인하세요."}
+
+# 15. 서버 실행 설정 (uvicorn으로 실행할 때 사용됨)
+if __name__ == "__main__":
+    import uvicorn
+    print("서버를 직접 실행합니다. (테스트용)")
+    uvicorn.run(app, host="127.0.0.1", port=8000)

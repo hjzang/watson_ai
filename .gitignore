@@ -1,0 +1,15 @@
+# Python 가상환경
+venv/
+
+# Python 캐시 파일
+__pycache__/
+*.pyc
+
+# 민감한 환경 변수 파일 (API 키!)
+.env
+
+# ChromaDB 데이터베이스 폴더
+chroma_db/
+
+# macOS 시스템 파일
+.DS_Store
