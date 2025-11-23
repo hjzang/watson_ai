@@ -152,7 +152,35 @@ def ask_watson(request: ChatRequest):
     except Exception as e:
         print(f"!!! 오류 발생: {e}")
         raise HTTPException(status_code=500, detail=f"AI 서버 내부 오류 발생")
-# 14-2. (신규) 채점 API 엔드포인트 (초-단순 Python 직접 계산)
+# 3-2. 채점 전용 시스템 프롬프트 (체크리스트 평가 버전)
+scoring_prompt_template = """
+너는 '도와줘! 왓슨!' 게임의 서술형 답안 채점관이다.
+너의 임무는 플레이어의 '작성 이유'를 읽고, 아래 **두 가지 체크리스트**를 통과했는지 확인하여 점수를 매기는 것이다.
+
+[상황 설명]
+플레이어는 '{conclusion}'라는 결론을 내렸지만, 그와 상반되는 증거(반대 증거)를 수집한 상태다.
+플레이어가 이 모순을 어떻게 설명하는지 평가해야 한다.
+
+[채점 체크리스트 (각 10점, 총 20점)]
+1. **[반대 증거 인지] (10점)**: 
+   - 텍스트에서 '반대 증거'(예: 결론이 밀정이면 '김원봉 메모' 등)의 존재를 언급하거나 인지하고 있는가?
+   - (예: "비록 김원봉의 메모가 있지만...", "B2 증거가 있긴 해도...")
+   - 언급했다면 10점, 아니면 0점.
+
+2. **[모순 해명] (10점)**:
+   - 그 반대 증거가 왜 자신의 결론을 방해하지 않는지 '가설'을 세워 설명했는가?
+   - (예: "...그건 위조된 것이다", "...신뢰를 얻기 위한 연기였다", "...이중간첩 활동의 일부다")
+   - 설명했다면 10점, 아니면 0점.
+
+[플레이어 답안]
+- 결론: {conclusion}
+- 선택한 증거: {selected_evidence}
+- 작성 이유: "{reasoning}"
+
+[출력 형식]
+두 점수를 합산하여 오직 숫자 **20**, **10**, **0** 중 하나만 출력하라. (다른 말 금지)
+"""
+# 14-2. (신규) 채점 API 엔드포인트 (하이브리드: Python 객관식 + AI 주관식)
 @app.post("/api/ai/score", response_model=ScoreResponse)
 async def score_report(request: ScoreRequest):
     print(f"\n--- 채점 요청 수신 ---")
@@ -162,21 +190,42 @@ async def score_report(request: ScoreRequest):
         B_EVIDENCE = {"B1", "B2", "B3", "B4", "B5"}
         CORE_EVIDENCE = A_EVIDENCE.union(B_EVIDENCE)
 
-        score1_collected = 0
-        score2_logic = 0
-
-        # [점수 1: 증거 수집도]
+        # --- 1. Python: 객관식 채점 (80점 만점) ---
+        # (1) 증거 수집도 (40점)
         collected_count = len(set(request.total_collected_ids).intersection(CORE_EVIDENCE))
-        score1_collected = collected_count * 4
+        score1 = collected_count * 4
 
-        # [점수 2: 논리적 추론]
+        # (2) 논리적 정합성 (40점) - 결론과 증거 ID가 매칭되는가?
         selected_set = set(request.selected_evidence_ids)
-        if request.conclusion == "miljeong":
-            if selected_set.issubset(A_EVIDENCE): score2_logic = 60
-        elif request.conclusion == "anti_miljeong":
-            if selected_set.issubset(B_EVIDENCE): score2_logic = 60
+        score2 = 0
+        if request.conclusion == "miljeong" and selected_set.issubset(A_EVIDENCE):
+            score2 = 40
+        elif request.conclusion == "anti_miljeong" and selected_set.issubset(B_EVIDENCE):
+            score2 = 40
 
-        total_score = score1_collected + score2_logic
+        # --- 2. AI: 주관식 서술형 채점 (20점 만점) ---
+        score3_ai = 0
+        if request.reasoning_text.strip(): # 작성한 이유가 있을 때만 AI 호출
+            print("AI 서술형 채점 시작...")
+            formatted_prompt = scoring_prompt_template.format(
+                conclusion=request.conclusion,
+                selected_evidence=f"{request.selected_evidence_ids}",
+                reasoning=request.reasoning_text
+            )
+            response = await llm.ainvoke([HumanMessage(content=formatted_prompt)])
+            
+            # AI 답변에서 숫자만 추출 (예: "점수는 20점입니다" -> 20)
+            import re
+            numbers = re.findall(r'\d+', response.content)
+            if numbers:
+                score3_ai = int(numbers[0])
+                # 안전장치: 0, 10, 20점 이외의 점수가 나오면 가장 가까운 값으로 조정하거나 그대로 둠
+                if score3_ai > 20: score3_ai = 20
+            
+            print(f"AI 서술형 점수: {score3_ai}")
+
+        # --- 3. 최종 합산 ---
+        total_score = score1 + score2 + score3_ai
         
         grade = "D"
         if total_score >= 95: grade = "S"
@@ -184,13 +233,13 @@ async def score_report(request: ScoreRequest):
         elif total_score >= 70: grade = "B"
         elif total_score >= 60: grade = "C"
         
-        feedback = f"증거 수집({score1_collected}/40), 논리성({score2_logic}/60)"
+        feedback = f"증거수집({score1}/40), 논리성({score2}/40), 서술평가({score3_ai}/20)"
         
         return ScoreResponse(total_score=total_score, grade=grade, feedback=feedback)
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Python 서버 채점 오류 발생")
-
+        print(f"Error: {e}")
+        raise HTTPException(status_code=500, detail="Scoring Error")
 # 15. 서버 실행 설정
 if __name__ == "__main__":
     import uvicorn
