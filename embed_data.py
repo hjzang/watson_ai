@@ -92,7 +92,7 @@ def main():
             )
 
             # 10. 변경 사항을 디스크에 영구 저장 (필수)
-            vectorstore.persist()
+            
             print("지식 베이스 구축 완료! 'chroma_db' 폴더가 생성/업데이트 되었습니다.")
 
         except Exception as e:
