@@ -31,7 +31,7 @@ if not os.getenv("OPENAI_API_KEY"):
 # 2. FastAPI 앱 생성
 app = FastAPI()
 
-# 3. AI '왓슨'의 시스템 프롬프트 (논리적 사고 강화 버전 - 순수 프롬프트 해결)
+# 3. AI '왓슨'의 시스템 프롬프트 
 system_prompt = """
 너는 임시정부 소속의 냉철한 수사 조수 AI '왓슨'이다.
 너의 말투는 항상 냉철하고, 분석적이며, '탐정님'이라는 호칭을 사용한다.
@@ -121,7 +121,7 @@ def format_chat_history(history_list: List[str]) -> List:
 def ask_watson(request: ChatRequest):
     print(f"\n--- 새 요청 수신 ---")
     
-    # Python 힌트 로직 삭제됨! 오직 AI 프롬프트로만 해결!
+   
 
     try:
         if not request.acquired_clue_list:
@@ -152,7 +152,7 @@ def ask_watson(request: ChatRequest):
     except Exception as e:
         print(f"!!! 오류 발생: {e}")
         raise HTTPException(status_code=500, detail=f"AI 서버 내부 오류 발생")
-# 3-2. 채점 전용 시스템 프롬프트 (체크리스트 평가 버전)
+# 3-2. 채점 전용 시스템 프롬프트 
 scoring_prompt_template = """
 너는 '도와줘! 왓슨!' 게임의 서술형 답안 채점관이다.
 너의 임무는 플레이어의 '작성 이유'를 읽고, 아래 **두 가지 체크리스트**를 통과했는지 확인하여 점수를 매기는 것이다.
