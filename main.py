@@ -20,13 +20,17 @@ EMBEDDING_MODEL = "text-embedding-3-small"
 LLM_MODEL = "gpt-4o-mini"
 # ---
 
-# 1. .env 파일에서 OPENAI_API_KEY 불러오기
-if not load_dotenv():
-    print("오류: .env 파일을 찾을 수 없습니다.")
+# .env 파일 있으면 로드 (로컬 개발용)
+load_dotenv()
+
+# 환경변수에서 가져오기 (Docker에서는 docker-compose가 전달)
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+if not OPENAI_API_KEY:
+    print("오류: OPENAI_API_KEY 환경변수가 설정되지 않았습니다.")
     sys.exit(1)
-if not os.getenv("OPENAI_API_KEY"):
-    print("오류: OPENAI_API_KEY가 .env 파일에 없습니다.")
-    sys.exit(1)
+
+print("✅ OPENAI_API_KEY 로드 성공")
 
 # 2. FastAPI 앱 생성
 app = FastAPI()
