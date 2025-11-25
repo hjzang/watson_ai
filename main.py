@@ -113,16 +113,29 @@ def format_chat_history(history_list: List[str]) -> List:
 @app.post("/api/ai/ask")
 def ask_watson(request: ChatRequest):
     print(f"\n--- 새 요청 수신 ---")
+    print(f"🔍 RAW REQUEST 객체: {request}")  # 추가
+    print(f"🔍 Request dict: {request.dict()}")  # 추가
+    print(f"질문: {request.question}")
+    print(f"받은 단서 목록: {request.acquired_clue_list}")
+    print(f"채팅 히스토리: {request.chat_history}")
     
-   
-
+    
     try:
         if not request.acquired_clue_list:
             metadata_filter = {"clue_id": "NONE"}
         else:
-            metadata_filter = {"clue_id": {"$in": request.acquired_clue_list}}	
-
+            metadata_filter = {"clue_id": {"$in": request.acquired_clue_list}}
+        
+        print(f"메타데이터 필터: {metadata_filter}")
+        
         retriever = vectorstore.as_retriever(search_kwargs={'filter': metadata_filter})
+        
+        # 🔧 수정: invoke() 메서드 사용
+        test_docs = retriever.invoke(request.question)
+        print(f"검색된 문서 수: {len(test_docs)}")
+        for i, doc in enumerate(test_docs):
+            print(f"문서 {i+1} - clue_id: {doc.metadata.get('clue_id', 'N/A')}")
+            print(f"내용 미리보기: {doc.page_content[:100]}...")
         
         rag_chain = (
             {
@@ -144,6 +157,8 @@ def ask_watson(request: ChatRequest):
         
     except Exception as e:
         print(f"!!! 오류 발생: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"AI 서버 내부 오류 발생")
 # 3-2. 채점 전용 시스템 프롬프트 
 scoring_prompt_template = """
@@ -237,3 +252,8 @@ async def score_report(request: ScoreRequest):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8000)
+
+# 기존 코드 끝에 추가
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
