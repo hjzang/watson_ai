@@ -42,7 +42,8 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             cd /home/ubuntu
-            docker-compose down
-            docker system prune -af
-            docker-compose pull ai-server
-            docker-compose up -d ai-server
+             docker-compose stop ai-server
+             docker-compose rm -f ai-server  
+             docker images | grep detective-ai | awk '{print $3}' | xargs -r docker rmi -f || true
+             docker-compose pull ai-server
+             docker-compose up -d ai-server
