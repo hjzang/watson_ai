@@ -173,7 +173,12 @@ def ask_watson(request: ChatRequest):
 # 8. 채점 API (최종: Python 계산 + AI 종합 피드백)
 @app.post("/api/ai/score", response_model=ScoreResponse)
 async def score_report(request: ScoreRequest):
-    print(f"\n--- 채점 요청 ---")
+    print("\n================= /api/ai/score 요청 수신 =================")
+    print(f"[결론 conclusion] {request.conclusion}")
+    print(f"[선택 증거 selected_evidence_ids] {request.selected_evidence_ids}")
+    print(f"[전체 수집 단서 total_collected_ids] {request.total_collected_ids}")
+    print(f"[작성 이유 reasoning_text] {request.reasoning_text}")
+    
     try:
         # [정답지]
         A_EVIDENCE = {"A1", "A2", "A3", "A4", "A5"}
@@ -183,6 +188,8 @@ async def score_report(request: ScoreRequest):
         # 1. 증거 수집도 (40점) - Python 계산
         collected_count = len(set(request.total_collected_ids).intersection(CORE_EVIDENCE))
         score1 = collected_count * 4
+        
+        print(f"[계산: 증거 수집도 score1] {score1}점 (수집 개수: {collected_count})")
 
         # 2. 논리적 추론 (40점) - Python 계산
         selected_set = set(request.selected_evidence_ids)
@@ -191,6 +198,9 @@ async def score_report(request: ScoreRequest):
             score2 = 40
         elif request.conclusion == "anti_miljeong" and selected_set.issubset(B_EVIDENCE):
             score2 = 40
+            
+        print(f"[계산: 논리적 추론 score2] {score2}점 (선택 증거={selected_set})")
+
             
         # 3. 서술형 평가 (20점) + AI 종합 코멘트
         score3 = 0
@@ -223,9 +233,15 @@ async def score_report(request: ScoreRequest):
             }}
             """
             
+            print("------ AI 채점 프롬프트 ------")
+            print(scoring_prompt)
+            print("------------------------------")
+            
             # AI 호출
             try:
                 resp = await llm.ainvoke([HumanMessage(content=scoring_prompt)])
+                content = resp.content.strip()
+                print(f"[AI 응답 원문]\n{content}")
                 
                 # JSON 파싱 (안전 장치)
                 import json
@@ -240,8 +256,12 @@ async def score_report(request: ScoreRequest):
                     result_json = json.loads(json_str)
                     score3 = result_json.get("score", 0)
                     ai_comment = result_json.get("comment", "")
+                    
+                    print(f"[AI 서술형 점수 score3] {score3}")
+                    print(f"[AI 피드백] {ai_comment}")
                 else:
                     score3 = 0
+                    print("[ERROR] JSON을 찾지 못함")
                     ai_comment = "피드백 생성 실패."
                     
             except Exception as e:
@@ -250,11 +270,13 @@ async def score_report(request: ScoreRequest):
                 ai_comment = "AI 평가를 진행할 수 없습니다."
         
         else:
+            print("[ERROR] JSON을 찾지 못함")
             ai_comment = "작성된 이유가 없어 서술형 점수를 받을 수 없습니다."
 
         # 최종 합산
         total_score = score1 + score2 + score3
-        
+        print(f"[최종 점수 total_score] {total_score}")
+              
         # 등급 계산
         grade = "D"
         if total_score >= 95: grade = "S"
@@ -262,6 +284,8 @@ async def score_report(request: ScoreRequest):
         elif total_score >= 70: grade = "B"
         elif total_score >= 60: grade = "C"
         
+        print(f"[등급 grade] {grade}")
+        print("================= /api/ai/score 종료 =================\n")
         # 피드백 문자열 생성
         feedback = f"증거 수집({score1}/40), 논리성({score2}/40), 서술 평가({score3}/20): {ai_comment}"
         
