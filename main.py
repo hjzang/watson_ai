@@ -191,7 +191,7 @@ async def score_report(request: ScoreRequest):
         
         print(f"[계산: 증거 수집도 score1] {score1}점 (수집 개수: {collected_count})")
 
-        # 2. 논리적 추론 (40점) - Python 계산
+        # 2. 논리적 추론 (40점) - Python 계산(사용x)
         selected_set = set(request.selected_evidence_ids)
         score2 = 0
         if request.conclusion == "miljeong" and selected_set.issubset(A_EVIDENCE):
@@ -209,27 +209,31 @@ async def score_report(request: ScoreRequest):
         if request.reasoning_text.strip():
             # [핵심 수정] score1, score2 변수를 프롬프트에 { }로 넣어서 AI에게 알려줍니다.
             scoring_prompt = f"""
-            너는 '도와줘! 왓슨!' 게임의 냉철한 채점관이다.
-            플레이어의 '작성 이유'를 평가하여 점수를 매기고, **시스템이 계산한 점수(수집, 논리)**까지 참고하여 종합적인 피드백을 작성하라.
+            너는 '도와줘! 왓슨!' 게임의 유연하고 너그러운 채점관이다.
+            플레이어의 글을 읽고 **0점에서 60점 사이의 점수**를 부여하라.
 
             [시스템 계산 점수 현황]
-            - 증거 수집도: {score1}점 / 40점 (40점에 멀어질수록 증거를 더 찾아야 함,유연하게 피드백해줘 수치에따라)
-            - 논리적 추론: {score2}점 / 40점 (0점이면 선택한 근거가 결론과 모순됨)
+            - 증거 수집도: {score1}점 / 40점
 
             [플레이어 답안]
             - 결론: {request.conclusion}
-            - 선택한 근거: {request.selected_evidence_ids}
             - 작성 이유: "{request.reasoning_text}"
             
-            [서술형 채점 기준 (20점 만점)]
-            - 20점: 주장이 명확하고, 반대 증거(모순)에 대한 합리적 해명이 포함됨.
-            - 10점: 해명이 부족하거나 단순 나열.
-            - 0점: 내용이 빈약하거나 논리적이지 않음.
+            [채점 가이드라인 (참고용)]
+            이 기준을 바탕으로 **1점 단위로 자유롭게** 점수를 매기시오.
             
+            - **최상위권 (50 ~ 60점):** 주장이 명확하고 핵심 증거(A1, A2 등)를 잘 언급함. 문장이 짧아도 핵심을 찔렀다면 60점 만점 부여.
+            - **중위권 (30 ~ 49점):** 결론은 맞지만 근거가 조금 빈약하거나, "그냥 범인 같음" 정도로 뭉뚱그려 설명함.
+            - **하위권 (0 ~ 29점):** 논리가 아예 없거나, 사건과 무관한 이야기를 함.
+
+            [피드백 지침]
+            - 점수에 맞춰 왓슨의 말투로 자연스러운 피드백을 작성할 것.
+            - 50점 이상이면 극찬하고, 그 미만이면 부드럽게 조언할 것.
+
             [출력 형식 (JSON)]
             {{
-                "score": 점수(숫자),
-                "comment": "전체 성적(수집+논리+서술)을 고려한 냉철한 피드백 한 문장.AI탐정조수 왓슨의 말투로 부족한 점을 따끔하게 지적하되, 끝에는 '플레이해 주셔서 감사합니다'라고 격려할 것."
+                "score": 점수(0~60 사이의 정수 예: 55, 48),
+                "comment": "피드백 한 문장,플레이에 대한 감사"
             }}
             """
             
@@ -274,7 +278,7 @@ async def score_report(request: ScoreRequest):
             ai_comment = "작성된 이유가 없어 서술형 점수를 받을 수 없습니다."
 
         # 최종 합산
-        total_score = score1 + score2 + score3
+        total_score = score1 + score3
         print(f"[최종 점수 total_score] {total_score}")
               
         # 등급 계산
@@ -287,7 +291,7 @@ async def score_report(request: ScoreRequest):
         print(f"[등급 grade] {grade}")
         print("================= /api/ai/score 종료 =================\n")
         # 피드백 문자열 생성
-        feedback = f"증거 수집({score1}/40), 논리성({score2}/40), 서술 평가({score3}/20): {ai_comment}"
+        feedback = f"증거 수집({score1}/40), 서술 평가({score3}/60): {ai_comment}"
         
         return ScoreResponse(total_score=total_score, grade=grade, feedback=feedback)
 
